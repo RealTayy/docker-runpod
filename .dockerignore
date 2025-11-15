@@ -1,0 +1,6 @@
+# Ignore everything; only include the build context files
+*
+!Dockerfile
+!entrypoint.sh
+!update-comfy.sh
+!README-runpod.md
