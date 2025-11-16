@@ -302,7 +302,8 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
-python3 main.py --listen "${HOST}" --port "${PORT}" --disable-auto-launch &
+python3 main.py --listen "${HOST}" --port "${PORT}" --disable-auto-launch \
+  > "${VOLUME_DIR}/logs/comfy.log" 2>&1 &
 COMFY_PID=$!
 echo "${COMFY_PID}" > "${VOLUME_DIR}/logs/comfy.pid"
 
