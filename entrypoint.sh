@@ -15,7 +15,8 @@ set -Eeuo pipefail
 
 : "${ENABLE_CODE_SERVER:=1}"
 : "${CODE_SERVER_PORT:=8443}"
-: "${CODE_SERVER_PASSWORD:=}"       # if empty, auto-generate & persist
+: "${CODE_SERVER_AUTH:=none}"       # "none" or "password"
+: "${CODE_SERVER_PASSWORD:=}"       # used only when CODE_SERVER_AUTH=password
 
 : "${COMFY_NO_AUTO_UPDATE:=1}"
 # --------------------------------------------
@@ -120,8 +121,8 @@ if [ "${ENABLE_JUPYTER}" = "1" ]; then
   fi
 fi
 
-# --------- Persist code-server password ----------
-if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
+# --------- Persist code-server password (if using password auth) ----------
+if [ "${ENABLE_CODE_SERVER}" = "1" ] && [ "${CODE_SERVER_AUTH}" = "password" ]; then
   mkdir -p "${VOLUME_DIR}/code-server"
   PASS_FILE="${VOLUME_DIR}/code-server/.password"
   if [ -z "${CODE_SERVER_PASSWORD}" ]; then
@@ -132,6 +133,10 @@ if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
       echo "${CODE_SERVER_PASSWORD}" > "${PASS_FILE}"
       log "[code-server] Password persisted at ${PASS_FILE}"
     fi
+  fi
+else
+  if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
+    log "[code-server] Auth disabled (CODE_SERVER_AUTH=${CODE_SERVER_AUTH})."
   fi
 fi
 
@@ -162,14 +167,24 @@ start_jupyter() {
 
 start_code_server() {
   [ "${ENABLE_CODE_SERVER}" = "1" ] || return 0
-  log "[code-server] Starting on 0.0.0.0:${CODE_SERVER_PORT}"
-  PASSWORD="${CODE_SERVER_PASSWORD}" code-server \
-    --bind-addr "0.0.0.0:${CODE_SERVER_PORT}" \
-    --auth password \
-    --user-data-dir "${VOLUME_DIR}/code-server/user-data" \
-    --extensions-dir "${VOLUME_DIR}/code-server/extensions" \
-    --disable-telemetry \
-    > "${VOLUME_DIR}/logs/code-server.log" 2>&1 &
+  log "[code-server] Starting on 0.0.0.0:${CODE_SERVER_PORT} (auth=${CODE_SERVER_AUTH})"
+  if [ "${CODE_SERVER_AUTH}" = "password" ]; then
+    PASSWORD="${CODE_SERVER_PASSWORD}" code-server \
+      --bind-addr "0.0.0.0:${CODE_SERVER_PORT}" \
+      --auth password \
+      --user-data-dir "${VOLUME_DIR}/code-server/user-data" \
+      --extensions-dir "${VOLUME_DIR}/code-server/extensions" \
+      --disable-telemetry \
+      > "${VOLUME_DIR}/logs/code-server.log" 2>&1 &
+  else
+    code-server \
+      --bind-addr "0.0.0.0:${CODE_SERVER_PORT}" \
+      --auth none \
+      --user-data-dir "${VOLUME_DIR}/code-server/user-data" \
+      --extensions-dir "${VOLUME_DIR}/code-server/extensions" \
+      --disable-telemetry \
+      > "${VOLUME_DIR}/logs/code-server.log" 2>&1 &
+  fi
   echo $! > "${VOLUME_DIR}/logs/code-server.pid"
 }
 
