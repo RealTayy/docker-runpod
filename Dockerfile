@@ -1,32 +1,40 @@
-# syntax=docker/dockerfile:1
-#
-# Minimal CUDA + PyTorch runtime for ComfyUI on RunPod with persistent first-run setup.
-# Defaults target CUDA 12.1. To rebuild for CUDA 11.8, set build args:
-#   --build-arg CUDA_VERSION=11.8.0 --build-arg TORCH_CUDA=cu118
-#
-ARG CUDA_VERSION=12.1.1
-ARG UBUNTU_VERSION=22.04
-FROM nvidia/cuda:${CUDA_VERSION}-cudnn8-runtime-ubuntu${UBUNTU_VERSION}
+# CUDA 12.1 + cuDNN on Ubuntu 22.04 (matches your current runtime)
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
-ENV DEBIAN_FRONTEND=noninteractive     PIP_NO_CACHE_DIR=1     PYTHONUNBUFFERED=1     VOLUME_DIR=/runpod-volume     COMFY_DIR=/runpod-volume/ComfyUI     VENV_DIR=/runpod-volume/venv     PORT=8188     HOST=0.0.0.0     TORCH_CUDA=cu121
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1
 
-# OS packages
-RUN apt-get update && apt-get install -y --no-install-recommends       python3 python3-venv python3-pip       git ffmpeg libgl1 libglib2.0-0       ca-certificates curl tini       build-essential     && rm -rf /var/lib/apt/lists/*
+# OS deps (git/venv/curl + small utils for net + video libs used by nodes)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-pip \
+    git curl ca-certificates \
+    iproute2 procps lsof \
+    ffmpeg libgl1 libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
 
-# Python tooling
-RUN python3 -m pip install --upgrade pip wheel setuptools
+# code-server (standalone install script)
+RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# Pre-install PyTorch into the image to avoid re-downloading on first pod start.
-# If you rebuild for CUDA 11.8, set TORCH_CUDA=cu118 at build time.
-# Use CUDA-specific wheels from the cu121 index.
-RUN python3 -m pip install --index-url https://download.pytorch.org/whl/${TORCH_CUDA}       torch==2.3.1+${TORCH_CUDA} torchvision==0.18.1+${TORCH_CUDA}
+# JupyterLab system-wide (entrypoint will run it from here)
+RUN python3 -m pip install --no-cache-dir --upgrade pip \
+ && python3 -m pip install --no-cache-dir jupyterlab
 
-# Copy startup scripts
+# Copy your entrypoint + helper
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY update-comfy.sh /usr/local/bin/update-comfy.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/update-comfy.sh
 
-EXPOSE 8188
+# Sensible defaults; override in the RunPod template if you like
+ENV COMFY_NO_AUTO_UPDATE=1 \
+    ENABLE_JUPYTER=1 JUPYTER_PORT=8888 \
+    ENABLE_CODE_SERVER=1 CODE_SERVER_PORT=8443
 
-ENTRYPOINT ["/usr/bin/tini","--"]
+# Services you will expose as HTTP in the RunPod template
+EXPOSE 8188 8888 8443
+
+# IMPORTANT:
+# Keep NVIDIA's ENTRYPOINT from the base image and pass our script as CMD.
+# On RunPod this will execute as:
+#   /sbin/docker-init -- /opt/nvidia/nvidia_entrypoint.sh /usr/local/bin/entrypoint.sh
 CMD ["/usr/local/bin/entrypoint.sh"]

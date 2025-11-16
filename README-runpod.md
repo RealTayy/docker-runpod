@@ -1,33 +1,21 @@
-# RunPod + ComfyUI (persistent, no auto-update)
+# RunPod + ComfyUI + JupyterLab + code-server (v3 with port guard)
 
-This template gives you a Docker image that **installs ComfyUI once** into your RunPod Network Volume
-and **never updates or overwrites** it on subsequent pod launches unless you explicitly tell it to.
+This version:
+- Starts **ComfyUI** in the foreground on `PORT` (default **8188**).
+- Starts **JupyterLab** (8888) and **code-server** (8443) in the background.
+- **Preflight check** frees `PORT` if something is already bound (defensive).
+- Keeps ComfyUI **persistent** on your volume and **never auto-updates** unless you ask.
 
-## What you get
-
-- CUDA-based runtime (Ubuntu 22.04) with **PyTorch 2.3.1** preinstalled (CUDA **12.1** by default).
-- First-run bootstrap that clones ComfyUI to `/runpod-volume/ComfyUI` and creates a venv in `/runpod-volume/venv`.
-- Subsequent starts skip cloning/reinstalling and simply launch ComfyUI.
-- Manual update script: `update-comfy.sh` (never runs automatically).
-- ComfyUI served on port **8188** at `http://<pod-hostname>:8188`.
-
-> To rebuild for CUDA 11.8, pass build args during `docker build`:
-> `--build-arg CUDA_VERSION=11.8.0 --build-arg TORCH_CUDA=cu118`
-
-## Build & Push
-
+## Build & Push (amd64)
 ```bash
-# From your project folder
-docker login
-# Optional: make sure buildx is ready
-docker buildx ls          # should show "docker-desktop" builder
-# If you don't see an active builder, you can do:
-# docker buildx create --use
-
-# Build AND push for RunPod's architecture
-docker buildx build \
-  --platform linux/amd64 \
-  -t maithe09/runpod-comfy:latest \
-  --push \
-  .
+docker buildx build --platform linux/amd64   -t <DOCKERHUB_USERNAME>/runpod-comfy:v3   -t <DOCKERHUB_USERNAME>/runpod-comfy:latest   --push .
 ```
+
+## RunPod Template
+- Image: your pushed tag
+- Volume: mount to `/runpod-volume`
+- HTTP Services: `8188` (ComfyUI), `8888` (Jupyter), `8443` (code-server)
+- Env (optional): set `JUPYTER_TOKEN` / `CODE_SERVER_PASSWORD`
+
+## Quick workaround if 8188 conflicts
+Set `PORT=8189` in the template and add an HTTP Service for 8189. Then switch back to 8188 later if desired.
