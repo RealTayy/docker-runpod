@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # --------- Config (env-overridable) ----------
-: "${VOLUME_DIR:=/runpod-volume}"
+: "${VOLUME_DIR:=/workspace}"
 : "${COMFY_DIR:=${VOLUME_DIR}/ComfyUI}"
 : "${VENV_DIR:=${VOLUME_DIR}/venv}"
 : "${HOST:=0.0.0.0}"
@@ -143,7 +143,8 @@ fi
 # --------- Side services (background) ----------
 start_jupyter() {
   [ "${ENABLE_JUPYTER}" = "1" ] || return 0
-  log "[Jupyter] Starting JupyterLab on 0.0.0.0:${JUPYTER_PORT}"
+  log "[Jupyter] Starting JupyterLab on 0.0.0.0:${JUPYTER_PORT} (no_auth=${JUPYTER_NO_AUTH})"
+  local jupyter_log="${VOLUME_DIR}/logs/jupyter.log"
   if [ "${JUPYTER_NO_AUTH}" = "1" ]; then
     python3 -m jupyterlab \
       --ServerApp.ip=0.0.0.0 \
@@ -151,18 +152,33 @@ start_jupyter() {
       --ServerApp.token= \
       --ServerApp.password= \
       --ServerApp.allow_remote_access=True \
+      --ServerApp.allow_root=True \
+      --LabApp.app_dir=/usr/local/share/jupyter/lab \
       --no-browser \
-      > "${VOLUME_DIR}/logs/jupyter.log" 2>&1 &
+      > >(tee -a "${jupyter_log}") 2>&1 &
   else
     python3 -m jupyterlab \
       --ServerApp.ip=0.0.0.0 \
       --ServerApp.port="${JUPYTER_PORT}" \
       --ServerApp.token="${JUPYTER_TOKEN}" \
       --ServerApp.allow_remote_access=True \
+      --ServerApp.allow_root=True \
+      --LabApp.app_dir=/usr/local/share/jupyter/lab \
       --no-browser \
-      > "${VOLUME_DIR}/logs/jupyter.log" 2>&1 &
+      > >(tee -a "${jupyter_log}") 2>&1 &
   fi
-  echo $! > "${VOLUME_DIR}/logs/jupyter.pid"
+  jupyter_pid=$!
+  echo "${jupyter_pid}" > "${VOLUME_DIR}/logs/jupyter.pid"
+
+  # Lightweight health check: is the port actually listening?
+  sleep 3
+  if command -v ss >/dev/null 2>&1; then
+    if ss -ltnH | awk '{print $4}' | grep -q ":${JUPYTER_PORT}\$"; then
+      log "[Jupyter] Port ${JUPYTER_PORT} is listening (pid=${jupyter_pid})."
+    else
+      log "[Jupyter] WARNING: Jupyter did not open port ${JUPYTER_PORT}; see ${jupyter_log}"
+    fi
+  fi
 }
 
 start_code_server() {

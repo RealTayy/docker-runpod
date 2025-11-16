@@ -8,7 +8,7 @@ This version:
 
 ## Build & Push (amd64)
 ```bash
-docker buildx build --platform linux/amd64   -t <DOCKERHUB_USERNAME>/runpod-comfy:v3   -t <DOCKERHUB_USERNAME>/runpod-comfy:latest   --push .
+docker buildx build --platform linux/amd64   -t maithe09/runpod-comfy:latest   --push .
 ```
 
 ## RunPod Template
