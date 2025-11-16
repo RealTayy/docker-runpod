@@ -10,11 +10,14 @@ set -Eeuo pipefail
 
 : "${ENABLE_JUPYTER:=1}"
 : "${JUPYTER_PORT:=8888}"
-: "${JUPYTER_TOKEN:=}"        # persisted if empty
+: "${JUPYTER_TOKEN:=}"              # if empty and JUPYTER_NO_AUTH=0, auto-generate & persist
+: "${JUPYTER_NO_AUTH:=1}"           # 1 => no token/password (your request)
 
 : "${ENABLE_CODE_SERVER:=1}"
 : "${CODE_SERVER_PORT:=8443}"
-: "${CODE_SERVER_PASSWORD:=Just55Smile}" # persisted if empty
+: "${CODE_SERVER_PASSWORD:=}"       # if empty, auto-generate & persist
+
+: "${COMFY_NO_AUTO_UPDATE:=1}"
 # --------------------------------------------
 
 log(){ echo "[$(date -Iseconds)] $*"; }
@@ -59,13 +62,18 @@ if [ ! -f "${VENV_DIR}/.requirements_installed" ]; then
   if [ -f "${COMFY_DIR}/requirements.txt" ]; then
     python3 -m pip install -r "${COMFY_DIR}/requirements.txt"
   fi
+  # Ensure JupyterLab is available in the venv
+  if [ "${ENABLE_JUPYTER}" = "1" ]; then
+    log "[Init] Installing JupyterLab into venv (first run)..."
+    python3 -m pip install "jupyterlab>=4"
+  fi
   touch "${VENV_DIR}/.requirements_installed"
   first_run=1
 fi
 
 # No auto-update unless explicitly requested
-if [ "${COMFY_NO_AUTO_UPDATE:-1}" != "0" ]; then
-  log "[Init] Auto-update disabled (COMFY_NO_AUTO_UPDATE=${COMFY_NO_AUTO_UPDATE:-1})."
+if [ "${COMFY_NO_AUTO_UPDATE}" != "0" ]; then
+  log "[Init] Auto-update disabled (COMFY_NO_AUTO_UPDATE=${COMFY_NO_AUTO_UPDATE})."
 else
   log "[Init] Auto-update enabled once (git pull + pip sync)."
   (cd "${COMFY_DIR}" && git pull --ff-only || true)
@@ -80,23 +88,39 @@ else
   log "[Init] Existing installation detected. Skipping updates."
 fi
 
-# --------- Stable, SIGPIPE-free credential persistence ----------
-rand24() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24; }
+# --------- SIGPIPE-free credential helpers ----------
+py_alnum_24() {
+  # Generates 24-char [A-Za-z0-9] string via Python (no pipes => safe under pipefail)
+  python3 - "$@" <<'PY'
+import secrets, string
+alphabet = string.ascii_letters + string.digits
+print(''.join(secrets.choice(alphabet) for _ in range(24)))
+PY
+}
 
+# --------- Persist Jupyter token / disable auth ----------
 if [ "${ENABLE_JUPYTER}" = "1" ]; then
   mkdir -p "${VOLUME_DIR}/jupyter"
   TOKEN_FILE="${VOLUME_DIR}/jupyter/.token"
-  if [ -z "${JUPYTER_TOKEN}" ]; then
-    if [ -f "${TOKEN_FILE}" ]; then
-      JUPYTER_TOKEN="$(cat "${TOKEN_FILE}")"
-    else
-      JUPYTER_TOKEN="$(rand24)"
-      echo "${JUPYTER_TOKEN}" > "${TOKEN_FILE}"
-      log "[Jupyter] Token persisted at ${TOKEN_FILE}"
+  if [ "${JUPYTER_NO_AUTH}" = "1" ]; then
+    # Explicitly disable auth
+    JUPYTER_TOKEN=""
+    log "[Jupyter] Auth disabled (JUPYTER_NO_AUTH=1)."
+  else
+    # Token required -> generate/persist if not supplied
+    if [ -z "${JUPYTER_TOKEN}" ]; then
+      if [ -f "${TOKEN_FILE}" ]; then
+        JUPYTER_TOKEN="$(cat "${TOKEN_FILE}")"
+      else
+        JUPYTER_TOKEN="$(py_alnum_24)"
+        echo "${JUPYTER_TOKEN}" > "${TOKEN_FILE}"
+        log "[Jupyter] Token persisted at ${TOKEN_FILE}"
+      fi
     fi
   fi
 fi
 
+# --------- Persist code-server password ----------
 if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
   mkdir -p "${VOLUME_DIR}/code-server"
   PASS_FILE="${VOLUME_DIR}/code-server/.password"
@@ -104,7 +128,7 @@ if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
     if [ -f "${PASS_FILE}" ]; then
       CODE_SERVER_PASSWORD="$(cat "${PASS_FILE}")"
     else
-      CODE_SERVER_PASSWORD="$(rand24)"
+      CODE_SERVER_PASSWORD="$(py_alnum_24)"
       echo "${CODE_SERVER_PASSWORD}" > "${PASS_FILE}"
       log "[code-server] Password persisted at ${PASS_FILE}"
     fi
@@ -115,13 +139,24 @@ fi
 start_jupyter() {
   [ "${ENABLE_JUPYTER}" = "1" ] || return 0
   log "[Jupyter] Starting JupyterLab on 0.0.0.0:${JUPYTER_PORT}"
-  python3 -m jupyterlab \
-    --ServerApp.ip=0.0.0.0 \
-    --ServerApp.port="${JUPYTER_PORT}" \
-    --ServerApp.token="${JUPYTER_TOKEN}" \
-    --ServerApp.allow_remote_access=True \
-    --no-browser \
-    > "${VOLUME_DIR}/logs/jupyter.log" 2>&1 &
+  if [ "${JUPYTER_NO_AUTH}" = "1" ]; then
+    python3 -m jupyterlab \
+      --ServerApp.ip=0.0.0.0 \
+      --ServerApp.port="${JUPYTER_PORT}" \
+      --ServerApp.token= \
+      --ServerApp.password= \
+      --ServerApp.allow_remote_access=True \
+      --no-browser \
+      > "${VOLUME_DIR}/logs/jupyter.log" 2>&1 &
+  else
+    python3 -m jupyterlab \
+      --ServerApp.ip=0.0.0.0 \
+      --ServerApp.port="${JUPYTER_PORT}" \
+      --ServerApp.token="${JUPYTER_TOKEN}" \
+      --ServerApp.allow_remote_access=True \
+      --no-browser \
+      > "${VOLUME_DIR}/logs/jupyter.log" 2>&1 &
+  fi
   echo $! > "${VOLUME_DIR}/logs/jupyter.pid"
 }
 
@@ -138,14 +173,14 @@ start_code_server() {
   echo $! > "${VOLUME_DIR}/logs/code-server.pid"
 }
 
-start_jupyter
-start_code_server
-
 # --------- Defensive port check for ComfyUI ----------
 is_port_busy() {
   command -v ss >/dev/null 2>&1 || return 1
-  ss -ltnH | awk '{print $4}' | grep -q ":${PORT}\$"
+  ss -ltnH | awk '{print $4}' | grep -q ":${PORT}\$" && return 0 || return 1
 }
+
+start_jupyter
+start_code_server
 
 if is_port_busy; then
   log "[WARN] Port ${PORT} already in use before ComfyUI launch. Aborting launch and idling."
@@ -153,12 +188,17 @@ if is_port_busy; then
   exec tail -f /dev/null
 fi
 
-# Final “just-in-time” check + launch
+# --------- Launch ComfyUI (foreground via wait) ----------
 log "[Start] Launching ComfyUI on ${HOST}:${PORT} ..."
 cd "${COMFY_DIR}"
 
 cleanup() {
-  log "[Shutdown] Stopping side services..."
+  log "[Shutdown] Stopping services..."
+  # stop ComfyUI if running
+  if [ -n "${COMFY_PID:-}" ]; then
+    kill -TERM "${COMFY_PID}" 2>/dev/null || true
+  fi
+  # stop side services
   for pidfile in "${VOLUME_DIR}/logs"/*.pid; do
     [ -f "$pidfile" ] || continue
     pid="$(cat "$pidfile" || true)"
@@ -167,5 +207,9 @@ cleanup() {
 }
 trap cleanup SIGINT SIGTERM
 
-# Run ComfyUI in the foreground (keeps container up)
-exec python3 main.py --listen "${HOST}" --port "${PORT}" --disable-auto-launch
+python3 main.py --listen "${HOST}" --port "${PORT}" --disable-auto-launch &
+COMFY_PID=$!
+echo "${COMFY_PID}" > "${VOLUME_DIR}/logs/comfy.pid"
+
+# Keep container alive as long as ComfyUI is alive
+wait "${COMFY_PID}"
