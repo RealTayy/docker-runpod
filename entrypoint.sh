@@ -65,11 +65,23 @@ if [ ! -f "${VENV_DIR}/.requirements_installed" ]; then
   fi
   # Ensure JupyterLab is available in the venv
   if [ "${ENABLE_JUPYTER}" = "1" ]; then
-    log "[Init] Installing JupyterLab into venv (first run)..."
-    python3 -m pip install "jupyterlab>=4"
+    log "[Init] Installing JupyterLab + ipykernel into venv (first run)..."
+    python3 -m pip install "jupyterlab>=4" "ipykernel"
   fi
   touch "${VENV_DIR}/.requirements_installed"
   first_run=1
+fi
+
+# Ensure Jupyter kernel is available even on existing installs
+if [ "${ENABLE_JUPYTER}" = "1" ]; then
+  if ! python3 -m pip show ipykernel >/dev/null 2>&1; then
+    log "[Init] Installing ipykernel into venv (existing install)..."
+    python3 -m pip install "ipykernel"
+  fi
+  log "[Init] Ensuring Jupyter ipykernel is registered for this venv..."
+  python3 -m ipykernel install --sys-prefix \
+    --name comfy-venv \
+    --display-name "Python 3 (Comfy venv)" >/dev/null 2>&1 || true
 fi
 
 # No auto-update unless explicitly requested
@@ -152,6 +164,9 @@ start_jupyter() {
       --ServerApp.token= \
       --ServerApp.password= \
       --ServerApp.allow_remote_access=True \
+      --ServerApp.trust_xheaders=True \
+      --ServerApp.allow_origin='*' \
+      --ServerApp.disable_check_xsrf=True \
       --ServerApp.allow_root=True \
       --LabApp.app_dir=/usr/local/share/jupyter/lab \
       --no-browser \
@@ -162,6 +177,9 @@ start_jupyter() {
       --ServerApp.port="${JUPYTER_PORT}" \
       --ServerApp.token="${JUPYTER_TOKEN}" \
       --ServerApp.allow_remote_access=True \
+      --ServerApp.trust_xheaders=True \
+      --ServerApp.allow_origin='*' \
+      --ServerApp.disable_check_xsrf=True \
       --ServerApp.allow_root=True \
       --LabApp.app_dir=/usr/local/share/jupyter/lab \
       --no-browser \
