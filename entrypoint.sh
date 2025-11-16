@@ -32,6 +32,11 @@ log "[Boot] Services -> ComfyUI:${PORT}  Jupyter:${ENABLE_JUPYTER}@${JUPYTER_POR
 
 mkdir -p "${VOLUME_DIR}/logs" "${VOLUME_DIR}/jupyter" "${VOLUME_DIR}/code-server"
 
+# Truncate service logs at startup so they don't grow across runs
+for logfile in jupyter.log code-server.log comfy.log; do
+  : > "${VOLUME_DIR}/logs/${logfile}" 2>/dev/null || true
+done
+
 # --------- Singleton lock to prevent thrash ----------
 LOCKFILE="${VOLUME_DIR}/.entry.lock"
 exec 9>"${LOCKFILE}"
