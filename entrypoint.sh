@@ -12,11 +12,13 @@ set -Eeuo pipefail
 : "${JUPYTER_PORT:=8888}"
 : "${JUPYTER_TOKEN:=}"              # if empty and JUPYTER_NO_AUTH=0, auto-generate & persist
 : "${JUPYTER_NO_AUTH:=1}"           # 1 => no token/password (your request)
+: "${JUPYTER_THEME:=JupyterLab Dark}"  # default JupyterLab theme
 
 : "${ENABLE_CODE_SERVER:=1}"
 : "${CODE_SERVER_PORT:=8443}"
 : "${CODE_SERVER_AUTH:=none}"       # "none" or "password"
 : "${CODE_SERVER_PASSWORD:=}"       # used only when CODE_SERVER_AUTH=password
+: "${CODE_SERVER_THEME:=Default Dark+}"  # VS Code theme name for code-server
 
 : "${COMFY_NO_AUTO_UPDATE:=1}"
 # --------------------------------------------
@@ -133,6 +135,21 @@ if [ "${ENABLE_JUPYTER}" = "1" ]; then
   fi
 fi
 
+# --------- Jupyter theme / settings ----------
+if [ "${ENABLE_JUPYTER}" = "1" ]; then
+  export JUPYTERLAB_SETTINGS_DIR="${VOLUME_DIR}/jupyter/lab/user-settings"
+  THEME_SETTINGS_FILE="${JUPYTERLAB_SETTINGS_DIR}/@jupyterlab/apputils-extension/themes.jupyterlab-settings"
+  if [ ! -f "${THEME_SETTINGS_FILE}" ]; then
+    mkdir -p "$(dirname "${THEME_SETTINGS_FILE}")"
+    cat > "${THEME_SETTINGS_FILE}" <<EOF
+{
+  "theme": "${JUPYTER_THEME}"
+}
+EOF
+    log "[Jupyter] Initialized JupyterLab theme settings: ${JUPYTER_THEME}"
+  fi
+fi
+
 # --------- Persist code-server password (if using password auth) ----------
 if [ "${ENABLE_CODE_SERVER}" = "1" ] && [ "${CODE_SERVER_AUTH}" = "password" ]; then
   mkdir -p "${VOLUME_DIR}/code-server"
@@ -150,6 +167,35 @@ else
   if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
     log "[code-server] Auth disabled (CODE_SERVER_AUTH=${CODE_SERVER_AUTH})."
   fi
+fi
+
+# --------- Initialize / update code-server settings (theme, trust, etc.) ----------
+if [ "${ENABLE_CODE_SERVER}" = "1" ]; then
+  SETTINGS_DIR="${VOLUME_DIR}/code-server/user-data/User"
+  SETTINGS_FILE="${SETTINGS_DIR}/settings.json"
+  mkdir -p "${SETTINGS_DIR}"
+  python3 - "${SETTINGS_FILE}" "${CODE_SERVER_THEME}" <<'PY'
+import json, os, sys
+
+path, theme = sys.argv[1], sys.argv[2]
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+
+# Set defaults without overriding user-changed settings
+data.setdefault("workbench.colorTheme", theme)
+# Disable workspace trust prompts
+data.setdefault("security.workspace.trust.enabled", False)
+
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+PY
+  log "[code-server] Ensured settings.json (theme=${CODE_SERVER_THEME}, workspace trust disabled)."
 fi
 
 # --------- Side services (background) ----------
