@@ -10,15 +10,15 @@ set -Eeuo pipefail
 
 : "${ENABLE_JUPYTER:=1}"
 : "${JUPYTER_PORT:=8888}"
-: "${JUPYTER_TOKEN:=}"              # if empty and JUPYTER_NO_AUTH=0, auto-generate & persist
-: "${JUPYTER_NO_AUTH:=1}"           # 1 => no token/password (your request)
-: "${JUPYTER_THEME:=JupyterLab Dark}"  # default JupyterLab theme
+: "${JUPYTER_TOKEN:=}"                    # if empty and JUPYTER_NO_AUTH=0, auto-generate & persist
+: "${JUPYTER_NO_AUTH:=1}"                 # 1 => no token/password (your request)
+: "${JUPYTER_THEME:=JupyterLab Dark}"     # default JupyterLab theme
 
 : "${ENABLE_CODE_SERVER:=1}"
 : "${CODE_SERVER_PORT:=8443}"
-: "${CODE_SERVER_AUTH:=none}"       # "none" or "password"
-: "${CODE_SERVER_PASSWORD:=}"       # used only when CODE_SERVER_AUTH=password
-: "${CODE_SERVER_THEME:=Default Dark+}"  # VS Code theme name for code-server
+: "${CODE_SERVER_AUTH:=none}"             # "none" or "password"
+: "${CODE_SERVER_PASSWORD:=}"             # used only when CODE_SERVER_AUTH=password
+: "${CODE_SERVER_THEME:=Default Dark+}"   # VS Code theme name for code-server
 
 : "${COMFY_NO_AUTO_UPDATE:=1}"
 # --------------------------------------------
@@ -238,16 +238,6 @@ start_jupyter() {
   fi
   jupyter_pid=$!
   echo "${jupyter_pid}" > "${VOLUME_DIR}/logs/jupyter.pid"
-
-  # Lightweight health check: is the port actually listening?
-  sleep 3
-  if command -v ss >/dev/null 2>&1; then
-    if ss -ltnH | awk '{print $4}' | grep -q ":${JUPYTER_PORT}\$"; then
-      log "[Jupyter] Port ${JUPYTER_PORT} is listening (pid=${jupyter_pid})."
-    else
-      log "[Jupyter] WARNING: Jupyter did not open port ${JUPYTER_PORT}; see ${jupyter_log}"
-    fi
-  fi
 }
 
 start_code_server() {

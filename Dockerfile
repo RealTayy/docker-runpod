@@ -5,10 +5,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1
 
-# OS deps (git/venv/curl + small utils for net + video libs used by nodes)
+# OS deps (git/venv/curl/wget + small utils for net + video libs used by nodes)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip \
-    git curl ca-certificates \
+    git curl wget ca-certificates \
     iproute2 procps lsof \
     ffmpeg libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
