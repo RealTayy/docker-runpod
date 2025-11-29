@@ -1,5 +1,5 @@
-# CUDA 12.1 + cuDNN on Ubuntu 22.04 (matches your current runtime)
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+# CUDA 12.8 devel + cuDNN on Ubuntu 22.04 (for SageAttention build on newer GPUs)
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -7,11 +7,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # OS deps (git/venv/curl/wget + small utils for net + video libs used by nodes)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip \
+    python3 python3-venv python3-pip python3-dev \
     git curl wget ca-certificates \
     iproute2 procps lsof \
     ffmpeg libgl1 libglib2.0-0 \
+    build-essential \
  && rm -rf /var/lib/apt/lists/*
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
 
 # code-server (standalone install script)
 RUN curl -fsSL https://code-server.dev/install.sh | sh

@@ -21,6 +21,13 @@ set -Eeuo pipefail
 : "${CODE_SERVER_THEME:=Default Dark+}"   # VS Code theme name for code-server
 
 : "${COMFY_NO_AUTO_UPDATE:=1}"
+: "${ENABLE_SAGEATTN:=1}"         # 1 => try to auto-install SageAttention in venv
+: "${SAGEATTN_VERSION:=2.2.0}"    # SageAttention version to install
+: "${TORCH_INDEX_URL:=https://download.pytorch.org/whl/cu128}"
+: "${TORCH_PIP_PACKAGES:=torch torchvision torchaudio}"
+
+# Export key toggles so Python sees them via os.getenv
+export ENABLE_SAGEATTN SAGEATTN_VERSION TORCH_INDEX_URL TORCH_PIP_PACKAGES
 # --------------------------------------------
 
 log(){ echo "[$(date -Iseconds)] $*"; }
@@ -66,7 +73,7 @@ source "${VENV_DIR}/bin/activate"
 
 if [ ! -f "${VENV_DIR}/.requirements_installed" ]; then
   log "[Init] Installing ComfyUI requirements (first run)..."
-  python3 -m pip install --upgrade pip wheel setuptools
+  python3 -m pip install --upgrade pip wheel setuptools ninja
   if [ -f "${COMFY_DIR}/requirements.txt" ]; then
     python3 -m pip install -r "${COMFY_DIR}/requirements.txt"
   fi
@@ -78,6 +85,118 @@ if [ ! -f "${VENV_DIR}/.requirements_installed" ]; then
   touch "${VENV_DIR}/.requirements_installed"
   first_run=1
 fi
+
+# --------- Torch stack bootstrap (inside venv) ----------
+ensure_torch_stack() {
+  log "[Init] Verifying torch stack in venv (index=${TORCH_INDEX_URL})..."
+  python3 - <<'PY'
+import os, subprocess, sys
+
+index_url = os.getenv("TORCH_INDEX_URL", "https://download.pytorch.org/whl/cu128")
+packages = os.getenv("TORCH_PIP_PACKAGES", "torch torchvision torchaudio").split()
+
+def p(msg: str):
+    print(f"[TorchInit] {msg}", flush=True)
+
+try:
+    import torch  # type: ignore
+    p(f"torch already installed: version={torch.__version__}, cuda={getattr(torch.version, 'cuda', None)}")
+    raise SystemExit(0)
+except Exception:
+    p(f"torch not found in venv; installing {' '.join(packages)} from {index_url}...")
+
+cmd = [
+    sys.executable, "-m", "pip", "install", *packages,
+    "--index-url", index_url,
+]
+p("Running: " + " ".join(cmd))
+try:
+    subprocess.check_call(cmd)
+except Exception as e:
+    p(f"ERROR installing torch stack: {e!r}. Comfy will still start, but SageAttention will be unavailable.")
+    raise SystemExit(0)
+
+try:
+    import torch  # type: ignore
+    p(f"torch install complete: version={torch.__version__}, cuda={getattr(torch.version, 'cuda', None)}, cuda_available={torch.cuda.is_available()}")
+except Exception as e:
+    p(f"torch import failed even after install: {e!r}")
+PY
+}
+
+# --------- SageAttention runtime install (inside venv) ----------
+ensure_sageattention() {
+  log "[Init] Checking SageAttention install gate (ENABLE_SAGEATTN=${ENABLE_SAGEATTN})..."
+  python3 - <<'PY'
+import importlib, os, subprocess, sys
+
+def p(msg: str):
+    print(f"[SageInit] {msg}", flush=True)
+
+enable_sage = os.getenv("ENABLE_SAGEATTN", "0") == "1"
+if not enable_sage:
+    p("ENABLE_SAGEATTN!=1; skipping SageAttention install.")
+    raise SystemExit(0)
+
+p("ENABLE_SAGEATTN=1; checking torch and SageAttention...")
+
+try:
+    import torch  # type: ignore
+except Exception as e:
+    p(f"torch import failed; cannot install SageAttention: {e!r}")
+    raise SystemExit(0)
+
+cuda_ver = getattr(torch.version, "cuda", None)
+p(f"torch version={torch.__version__}, torch.version.cuda={cuda_ver}, cuda_available={torch.cuda.is_available()}")
+
+if not torch.cuda.is_available():
+    p("torch.cuda.is_available() is False; skipping SageAttention.")
+    raise SystemExit(0)
+
+base_ver = torch.__version__.split('+')[0]
+parts = base_ver.split(".")
+try:
+    major = int(parts[0])
+    minor = int(parts[1]) if len(parts) > 1 else 0
+except ValueError:
+    major = minor = 0
+
+if major < 2 or (major == 2 and minor < 3):
+    p(f"torch<2.3 detected ({base_ver}); SageAttention requires torch>=2.3.0. Skipping install.")
+    raise SystemExit(0)
+
+try:
+    importlib.import_module("sageattention")
+    p("SageAttention already installed; nothing to do.")
+    raise SystemExit(0)
+except ImportError:
+    pass
+
+sage_ver = os.getenv("SAGEATTN_VERSION", "2.2.0")
+p(f"Installing SageAttention=={sage_ver} with --no-build-isolation...")
+
+cmd = [
+    sys.executable, "-m", "pip", "install",
+    f"sageattention=={sage_ver}",
+    "--no-build-isolation",
+]
+p("Running: " + " ".join(cmd))
+try:
+    subprocess.check_call(cmd)
+except Exception as e:
+    p(f"ERROR installing SageAttention: {e!r}. Comfy will run without SageAttention.")
+    raise SystemExit(0)
+
+try:
+    importlib.import_module("sageattention")
+    p("SageAttention import test succeeded.")
+except Exception as e:
+    p(f"SageAttention import test failed even after install: {e!r}")
+PY
+}
+
+ensure_torch_stack
+ensure_sageattention
 
 # Ensure Jupyter kernel is available even on existing installs
 if [ "${ENABLE_JUPYTER}" = "1" ]; then

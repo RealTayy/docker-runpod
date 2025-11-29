@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-: "${VOLUME_DIR:=/runpod-volume}"
+: "${VOLUME_DIR:=/workspace}"
 : "${COMFY_DIR:=${VOLUME_DIR}/ComfyUI}"
 : "${VENV_DIR:=${VOLUME_DIR}/venv}"
 
@@ -14,7 +14,7 @@ cd "$COMFY_DIR"
 git pull --ff-only
 
 source "${VENV_DIR}/bin/activate"
-pip install --upgrade pip wheel setuptools
+pip install --upgrade pip wheel setuptools ninja
 if [ -f requirements.txt ]; then
     pip install -r requirements.txt
 fi
