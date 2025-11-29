@@ -44,12 +44,22 @@ for logfile in jupyter.log code-server.log comfy.log; do
   : > "${VOLUME_DIR}/logs/${logfile}" 2>/dev/null || true
 done
 
-# --------- Singleton lock to prevent thrash ----------
+# --------- Setup lock (serialize installs, then release) ----------
 LOCKFILE="${VOLUME_DIR}/.entry.lock"
 exec 9>"${LOCKFILE}"
-if ! flock -n 9; then
-  log "[Lock] Another entrypoint instance is running; idling for inspection."
-  exec tail -f /dev/null
+LOCK_HELD=0
+if flock -n 9; then
+  LOCK_HELD=1
+else
+  # Allow coexistence with a legacy instance that never releases the lock
+  if [ -d "${COMFY_DIR}" ] && [ -d "${VENV_DIR}" ] && [ -f "${VENV_DIR}/.requirements_installed" ]; then
+    log "[Lock] Lock held by another instance, but install already present; continuing without setup lock."
+  else
+    log "[Lock] Another entrypoint instance is initializing; waiting for setup lock..."
+    flock 9
+    LOCK_HELD=1
+    log "[Lock] Setup lock acquired; continuing startup."
+  fi
 fi
 
 # --------- First-run install (persistent) ----------
@@ -320,6 +330,13 @@ with open(path, "w") as f:
     json.dump(data, f, indent=2)
 PY
   log "[code-server] Ensured settings.json (theme=${CODE_SERVER_THEME}, workspace trust disabled)."
+fi
+
+# --------- Release setup lock before launching services ----------
+if [ "${LOCK_HELD}" -eq 1 ]; then
+  flock -u 9 || true
+  LOCK_HELD=0
+  log "[Lock] Setup complete; lock released to allow concurrent instances."
 fi
 
 # --------- Side services (background) ----------
